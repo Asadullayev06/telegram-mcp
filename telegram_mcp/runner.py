@@ -1,5 +1,7 @@
 """Application entrypoints for the Telegram MCP server."""
 
+import os
+
 from telegram_mcp.install_guard import UnsafeInstallationError, assert_safe_distribution
 
 try:
@@ -19,11 +21,21 @@ async def _connect_authorized_client(label, client) -> None:
 
     raise RuntimeError(
         f"Telegram client '{label}' is not authorized. Interactive phone login "
-        "is disabled for the MCP server because it runs over stdio. Generate a "
-        "session string with `uv run session_string_generator.py`, then set "
-        "TELEGRAM_SESSION_STRING or TELEGRAM_SESSION_STRING_<LABEL> in .env. "
+        "is disabled for the MCP server. Generate a session string with "
+        "`uv run session_string_generator.py`, then set TELEGRAM_SESSION_STRING "
+        "or TELEGRAM_SESSION_STRING_<LABEL> in the environment. "
         "For existing file sessions, run the login outside the MCP server first."
     )
+
+
+def _resolve_transport() -> str:
+    """Pick MCP transport. Defaults to SSE when PORT is set (remote deploy)."""
+    explicit = os.environ.get("MCP_TRANSPORT")
+    if explicit:
+        return explicit.lower()
+    if os.environ.get("PORT"):
+        return "sse"
+    return "stdio"
 
 
 async def _main() -> None:
@@ -50,9 +62,35 @@ async def _main() -> None:
 
         warm_task = asyncio.create_task(_warm_caches())
 
-        print(f"Telegram client(s) started ({labels}). Running MCP server...", file=sys.stderr)
-        # Use the asynchronous entrypoint instead of mcp.run()
-        await mcp.run_stdio_async()
+        transport = _resolve_transport()
+        if transport == "sse":
+            port = int(os.environ.get("PORT", "8000"))
+            host = os.environ.get("HOST", "0.0.0.0")
+            mcp.settings.host = host
+            mcp.settings.port = port
+            print(
+                f"Telegram client(s) started ({labels}). "
+                f"Running MCP server over SSE on http://{host}:{port}/sse ...",
+                file=sys.stderr,
+            )
+            await mcp.run_sse_async()
+        elif transport in ("streamable-http", "http"):
+            port = int(os.environ.get("PORT", "8000"))
+            host = os.environ.get("HOST", "0.0.0.0")
+            mcp.settings.host = host
+            mcp.settings.port = port
+            print(
+                f"Telegram client(s) started ({labels}). "
+                f"Running MCP server over Streamable HTTP on http://{host}:{port}/mcp ...",
+                file=sys.stderr,
+            )
+            await mcp.run_streamable_http_async()
+        else:
+            print(
+                f"Telegram client(s) started ({labels}). Running MCP server over stdio...",
+                file=sys.stderr,
+            )
+            await mcp.run_stdio_async()
     except Exception as e:
         print(f"Error starting client: {e}", file=sys.stderr)
         if isinstance(e, sqlite3.OperationalError) and "database is locked" in str(e):

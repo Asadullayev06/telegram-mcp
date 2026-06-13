@@ -35,14 +35,16 @@ USER appuser
 # These should be provided at runtime, not hardcoded (especially secrets)
 ENV TELEGRAM_API_ID=""
 ENV TELEGRAM_API_HASH=""
-# Specify one of the following at runtime:
-# Default session filename
-ENV TELEGRAM_SESSION_NAME="telegram_mcp_session"
-# Or provide the session string directly
+# Provide the session string at runtime (required for remote/HTTP deployments):
 ENV TELEGRAM_SESSION_STRING=""
 
-# Expose any ports if the application were a web server (not needed for stdio MCP)
-# EXPOSE 8000
+# Force SSE transport in containerized deployments. Railway/other PaaS will
+# inject PORT; HOST defaults to 0.0.0.0 so the server binds publicly.
+ENV MCP_TRANSPORT="sse"
+ENV PORT="8000"
+ENV HOST="0.0.0.0"
+
+EXPOSE 8000
 
 # Define the command to run the application
 CMD ["python", "main.py"]
