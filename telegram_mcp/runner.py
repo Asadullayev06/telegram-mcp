@@ -63,11 +63,18 @@ async def _main() -> None:
         warm_task = asyncio.create_task(_warm_caches())
 
         transport = _resolve_transport()
-        if transport == "sse":
+        if transport in ("sse", "streamable-http", "http"):
             port = int(os.environ.get("PORT", "8000"))
             host = os.environ.get("HOST", "0.0.0.0")
             mcp.settings.host = host
             mcp.settings.port = port
+            # FastMCP defaults its DNS-rebinding allowlist to localhost only,
+            # which 421s any request reaching the container through a PaaS
+            # edge proxy (Railway, Fly, etc). Disable the check unless the
+            # operator explicitly enables it.
+            if os.environ.get("MCP_DISABLE_HOST_CHECK", "1") not in ("0", "false", "False"):
+                mcp.settings.transport_security.enable_dns_rebinding_protection = False
+        if transport == "sse":
             print(
                 f"Telegram client(s) started ({labels}). "
                 f"Running MCP server over SSE on http://{host}:{port}/sse ...",
@@ -75,10 +82,6 @@ async def _main() -> None:
             )
             await mcp.run_sse_async()
         elif transport in ("streamable-http", "http"):
-            port = int(os.environ.get("PORT", "8000"))
-            host = os.environ.get("HOST", "0.0.0.0")
-            mcp.settings.host = host
-            mcp.settings.port = port
             print(
                 f"Telegram client(s) started ({labels}). "
                 f"Running MCP server over Streamable HTTP on http://{host}:{port}/mcp ...",
