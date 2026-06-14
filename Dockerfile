@@ -46,7 +46,10 @@ ENV HOST="0.0.0.0"
 
 # Remote MCP clients don't negotiate Roots, so file-path tools
 # (download_media, upload_file) need a default writable directory.
-ENV MCP_DEFAULT_ROOT="/tmp/downloads"
+# Use /tmp (the container's ephemeral tmpfs) so callers can pass any
+# /tmp/* path without hitting the allowed-roots check, while keeping
+# /etc, /app, etc. off-limits.
+ENV MCP_DEFAULT_ROOT="/tmp"
 
 EXPOSE 8000
 
