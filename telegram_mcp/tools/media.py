@@ -1,6 +1,15 @@
 """Media MCP tools."""
 
+import base64
+
+from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
+
 from telegram_mcp.runtime import *
+
+# Cap inline file delivery so a malicious or accidental huge download doesn't
+# blow up the MCP transport. Files larger than this still land on disk; only
+# the path is returned.
+_INLINE_MAX_BYTES = 25 * 1024 * 1024
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Send File", openWorldHint=True, destructiveHint=True))
@@ -122,9 +131,14 @@ async def download_media(
     file_path: Optional[str] = None,
     ctx: Optional[Context] = None,
     account: str = None,
-) -> str:
+):
     """
     Download media from a message in a chat.
+
+    For remote MCP clients (claude.ai), the file bytes are also returned
+    inline as an embedded resource so the client receives the content
+    directly. Files larger than 25 MiB are saved to disk only.
+
     Args:
         chat_id: The chat ID or username.
         message_id: The message ID containing the media.
@@ -164,7 +178,30 @@ async def download_media(
         if not _path_is_within_any_root(final_path, roots):
             return "Download failed: resulting path is outside allowed roots."
 
-        return f"Media downloaded to {final_path}."
+        size = final_path.stat().st_size
+        summary = f"Media downloaded to {final_path} ({size} bytes)."
+
+        if size > _INLINE_MAX_BYTES:
+            return summary + (
+                f" File exceeds {_INLINE_MAX_BYTES} byte inline cap; not embedded."
+            )
+
+        mime_type, _ = mimetypes.guess_type(str(final_path))
+        if not mime_type:
+            mime_type = "application/octet-stream"
+        blob = base64.b64encode(final_path.read_bytes()).decode("ascii")
+
+        return [
+            TextContent(type="text", text=summary),
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri=f"file://{final_path.as_posix()}",
+                    mimeType=mime_type,
+                    blob=blob,
+                ),
+            ),
+        ]
     except Exception as e:
         return log_and_format_error(
             "download_media",

@@ -974,8 +974,11 @@ async def _get_effective_allowed_roots_with_status(
                 return fallback_roots, ROOTS_STATUS_UNSUPPORTED_FALLBACK
             return [], ROOTS_STATUS_NOT_CONFIGURED
         logger.error(
-            "MCP roots request failed; disabling file-path tools for safety.", exc_info=True
+            "MCP roots request failed; falling back to server-side roots if configured.",
+            exc_info=True,
         )
+        if fallback_roots:
+            return fallback_roots, ROOTS_STATUS_UNSUPPORTED_FALLBACK
         return [], ROOTS_STATUS_ERROR
 
     client_roots: List[Path] = []
@@ -989,7 +992,13 @@ async def _get_effective_allowed_roots_with_status(
     if client_roots:
         return _dedupe_paths(client_roots), ROOTS_STATUS_READY
 
-    # Roots API succeeded; an empty roots list is treated as explicit deny-all.
+    # Roots API succeeded but client returned no roots. When the operator has
+    # explicitly configured server-side roots (CLI args or MCP_DEFAULT_ROOT),
+    # treat those as authoritative — remote clients (claude.ai over SSE) have
+    # no local filesystem to expose, so empty-from-client is the norm there,
+    # not an intentional deny-all.
+    if fallback_roots:
+        return fallback_roots, ROOTS_STATUS_UNSUPPORTED_FALLBACK
     return [], ROOTS_STATUS_CLIENT_DENY_ALL
 
 
