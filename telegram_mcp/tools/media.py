@@ -213,6 +213,61 @@ async def download_media(
 
 
 @mcp.tool(
+    annotations=ToolAnnotations(title="Read File", readOnlyHint=True, openWorldHint=False)
+)
+async def read_file(
+    file_path: str,
+    ctx: Optional[Context] = None,
+) -> dict:
+    """
+    Read a file under the server's allowed roots and return its base64
+    contents. Pair with download_media when an embedded resource doesn't
+    surface in the MCP client UI: download first, then read_file the
+    returned path to retrieve the bytes as text-safe base64.
+
+    Args:
+        file_path: Absolute or relative path. Must resolve under the
+            server's allowed roots (e.g. /tmp on Railway).
+
+    Returns:
+        dict with `path`, `mime_type`, `size_bytes`, and `base64_content`.
+        Files over 25 MiB return an error string instead.
+    """
+    try:
+        safe_path, path_error = await _resolve_readable_file_path(
+            raw_path=file_path,
+            ctx=ctx,
+            tool_name="read_file",
+        )
+        if path_error:
+            return {"error": path_error}
+
+        size = safe_path.stat().st_size
+        if size > _INLINE_MAX_BYTES:
+            return {
+                "error": (
+                    f"File size {size} bytes exceeds inline cap "
+                    f"({_INLINE_MAX_BYTES} bytes)."
+                ),
+                "path": str(safe_path),
+                "size_bytes": size,
+            }
+
+        mime_type, _ = mimetypes.guess_type(str(safe_path))
+        if not mime_type:
+            mime_type = "application/octet-stream"
+
+        return {
+            "path": str(safe_path),
+            "mime_type": mime_type,
+            "size_bytes": size,
+            "base64_content": base64.b64encode(safe_path.read_bytes()).decode("ascii"),
+        }
+    except Exception as e:
+        return {"error": str(e), "path": file_path}
+
+
+@mcp.tool(
     annotations=ToolAnnotations(title="Send Voice", openWorldHint=True, destructiveHint=True)
 )
 @with_account(readonly=False)
@@ -459,6 +514,7 @@ __all__ = [
     "send_file",
     "send_album",
     "download_media",
+    "read_file",
     "send_voice",
     "upload_file",
     "get_media_info",
