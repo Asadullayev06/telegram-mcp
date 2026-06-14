@@ -1125,6 +1125,18 @@ def _configure_allowed_roots_from_cli(argv: Optional[List[str]] = None) -> None:
         resolved = root.resolve(strict=True)
         resolved_roots.append(resolved)
 
+    # Remote transports (SSE/HTTP) usually have no MCP Roots negotiation and no
+    # CLI args, so file-path tools (download_media, upload_file) would refuse
+    # to run. Allow operators to set MCP_DEFAULT_ROOT — a directory that's
+    # created if missing and used as the sole allowed root when nothing else
+    # is configured.
+    if not resolved_roots:
+        default_root = os.environ.get("MCP_DEFAULT_ROOT")
+        if default_root:
+            root = Path(default_root).expanduser()
+            root.mkdir(parents=True, exist_ok=True)
+            resolved_roots.append(root.resolve(strict=True))
+
     global SERVER_ALLOWED_ROOTS
     SERVER_ALLOWED_ROOTS = _dedupe_paths(resolved_roots)
 

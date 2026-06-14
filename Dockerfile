@@ -44,6 +44,10 @@ ENV MCP_TRANSPORT="sse"
 ENV PORT="8000"
 ENV HOST="0.0.0.0"
 
+# Remote MCP clients don't negotiate Roots, so file-path tools
+# (download_media, upload_file) need a default writable directory.
+ENV MCP_DEFAULT_ROOT="/tmp/downloads"
+
 EXPOSE 8000
 
 # Define the command to run the application
