@@ -66,6 +66,15 @@ async def _main() -> None:
         # Register auto-reply handlers (no-op when AUTO_REPLY_ENABLED is not set)
         setup_auto_reply(clients)
 
+        # Start Telethon's receive loop for each client as a background task so
+        # event handlers (auto-reply, etc.) actually fire. Without this, connect()
+        # opens the socket but no updates are ever read from it.
+        receive_tasks = [
+            asyncio.create_task(cl.run_until_disconnected(), name=f"telethon-recv-{label}")
+            for label, cl in clients.items()
+        ]
+        print(f"Telethon receive loop(s) started for: {labels}", file=sys.stderr)
+
         transport = _resolve_transport()
         if transport in ("sse", "streamable-http", "http"):
             port = int(os.environ.get("PORT", "8000"))
