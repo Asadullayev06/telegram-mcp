@@ -10,48 +10,46 @@ Activated when AUTO_REPLY_ENABLED=true is set in the environment.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
+import sys
 from typing import Optional
 
 import httpx
 from telethon import TelegramClient, events
 from telethon.tl.types import User
 
-logger = logging.getLogger("telegram_mcp.auto_reply")
-
 # ---------------------------------------------------------------------------
-# Config (read once at import time so the runner can validate early)
+# Config
 # ---------------------------------------------------------------------------
 
 AUTO_REPLY_ENABLED: bool = os.environ.get("AUTO_REPLY_ENABLED", "").strip().lower() in (
     "1", "true", "yes", "on",
 )
 
-# LLM settings
 LLM_API_KEY: str = os.environ.get("AUTO_REPLY_LLM_API_KEY", "")
 LLM_BASE_URL: str = os.environ.get(
-    "AUTO_REPLY_LLM_BASE_URL", "https://openrouter.ai/api/v1"
+    "AUTO_REPLY_LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai"
 ).rstrip("/")
-LLM_MODEL: str = os.environ.get("AUTO_REPLY_LLM_MODEL", "mistralai/mistral-7b-instruct:free")
+LLM_MODEL: str = os.environ.get("AUTO_REPLY_LLM_MODEL", "gemini-2.0-flash")
 LLM_MAX_TOKENS: int = int(os.environ.get("AUTO_REPLY_LLM_MAX_TOKENS", "300"))
 LLM_TEMPERATURE: float = float(os.environ.get("AUTO_REPLY_LLM_TEMPERATURE", "0.8"))
 
-# How many recent messages to load as context (back-and-forth pairs)
 HISTORY_LIMIT: int = int(os.environ.get("AUTO_REPLY_HISTORY_LIMIT", "20"))
 
-# The system prompt that defines the owner's personality / tone.
-# Keep it short and natural — just describe how you normally write.
 DEFAULT_SYSTEM_PROMPT = (
     "You are replying to a Telegram DM on behalf of the account owner. "
     "Match the owner's natural, casual messaging tone exactly as shown in the "
     "conversation history. Be concise. Never reveal you are an AI. "
     "Reply only with the message text, nothing else."
 )
-SYSTEM_PROMPT: str = os.environ.get("AUTO_REPLY_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
+SYSTEM_PROMPT: str = os.environ.get("AUTO_REPLY_SYSTEM_PROMPT", "") or DEFAULT_SYSTEM_PROMPT
 
-# Typing simulation: pause this many seconds before sending (feels human)
 TYPING_DELAY: float = float(os.environ.get("AUTO_REPLY_TYPING_DELAY", "2.0"))
+
+
+def _log(msg: str) -> None:
+    print(f"[auto_reply] {msg}", file=sys.stderr, flush=True)
+
 
 # ---------------------------------------------------------------------------
 # LLM call
@@ -59,9 +57,8 @@ TYPING_DELAY: float = float(os.environ.get("AUTO_REPLY_TYPING_DELAY", "2.0"))
 
 
 async def _call_llm(messages: list[dict]) -> Optional[str]:
-    """Call the configured LLM API (OpenAI-compatible) and return the reply text."""
     if not LLM_API_KEY:
-        logger.error("AUTO_REPLY_LLM_API_KEY is not set — cannot generate reply.")
+        _log("ERROR: AUTO_REPLY_LLM_API_KEY is not set.")
         return None
 
     payload = {
@@ -71,6 +68,7 @@ async def _call_llm(messages: list[dict]) -> Optional[str]:
         "temperature": LLM_TEMPERATURE,
     }
 
+    _log(f"Calling LLM: {LLM_BASE_URL} model={LLM_MODEL}")
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -81,13 +79,18 @@ async def _call_llm(messages: list[dict]) -> Optional[str]:
                 },
                 json=payload,
             )
-            resp.raise_for_status()
+            _log(f"LLM response status: {resp.status_code}")
+            if resp.status_code != 200:
+                _log(f"LLM error body: {resp.text[:500]}")
+                resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
+            text = data["choices"][0]["message"]["content"].strip()
+            _log(f"LLM reply generated ({len(text)} chars)")
+            return text
     except httpx.HTTPStatusError as exc:
-        logger.error("LLM API HTTP error %s: %s", exc.response.status_code, exc.response.text)
-    except Exception:
-        logger.error("LLM API call failed", exc_info=True)
+        _log(f"LLM HTTP error {exc.response.status_code}: {exc.response.text[:300]}")
+    except Exception as exc:
+        _log(f"LLM call failed: {exc}")
     return None
 
 
@@ -102,10 +105,8 @@ async def _build_messages(
     me_id: int,
     incoming_text: str,
 ) -> list[dict]:
-    """Build the chat-completions messages list from Telegram history."""
     history_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # Fetch recent messages (oldest first after reversing)
     try:
         fetched = await client.get_messages(peer, limit=HISTORY_LIMIT)
         for msg in reversed(fetched):
@@ -115,17 +116,16 @@ async def _build_messages(
             sender_id = getattr(msg, "sender_id", None)
             role = "assistant" if sender_id == me_id else "user"
             history_messages.append({"role": role, "content": text})
-    except Exception:
-        logger.warning("Could not fetch history, replying with no context.", exc_info=True)
+        _log(f"Built context with {len(history_messages) - 1} history messages")
+    except Exception as exc:
+        _log(f"Could not fetch history (replying with no context): {exc}")
 
-    # The new incoming message (may already be in history, but appending ensures
-    # it's always the last turn for the model)
     history_messages.append({"role": "user", "content": incoming_text})
     return history_messages
 
 
 # ---------------------------------------------------------------------------
-# Per-account handler registration
+# Per-account handler
 # ---------------------------------------------------------------------------
 
 
@@ -134,74 +134,65 @@ def _is_bot(sender) -> bool:
 
 
 def register_auto_reply(client: TelegramClient, label: str) -> None:
-    """Register the incoming-DM handler on a single TelegramClient."""
 
     @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
     async def _handle_dm(event: events.NewMessage.Event) -> None:
         text: str = getattr(event.message, "message", "") or ""
+        _log(f"[{label}] DM event fired. text={repr(text[:80])}")
+
         if not text.strip():
-            # Skip media-only messages (voice, photos without caption, etc.)
+            _log(f"[{label}] Skipping: media-only message.")
             return
 
         sender = await event.get_sender()
 
-        # Never reply to bots or to ourselves
         if _is_bot(sender):
+            _log(f"[{label}] Skipping: sender is a bot.")
             return
 
         me = await client.get_me()
         if sender and getattr(sender, "id", None) == me.id:
+            _log(f"[{label}] Skipping: message from self.")
             return
 
         sender_name = getattr(sender, "first_name", None) or str(getattr(sender, "id", "?"))
-        logger.info("[%s] Incoming DM from %s — generating reply...", label, sender_name)
+        _log(f"[{label}] Incoming DM from {sender_name!r} — generating reply...")
 
         llm_messages = await _build_messages(client, event.peer_id, me.id, text)
         reply_text = await _call_llm(llm_messages)
 
         if not reply_text:
-            logger.warning("[%s] No reply generated for DM from %s.", label, sender_name)
+            _log(f"[{label}] No reply generated — aborting.")
             return
 
-        # Brief pause so the reply doesn't feel instant/robotic
         if TYPING_DELAY > 0:
             async with client.action(event.chat_id, "typing"):
                 await asyncio.sleep(TYPING_DELAY)
 
         await client.send_message(event.chat_id, reply_text)
-        logger.info("[%s] Replied to %s.", label, sender_name)
+        _log(f"[{label}] Reply sent to {sender_name!r}.")
 
-    logger.info("[%s] Auto-reply handler registered (DMs only).", label)
+    _log(f"[{label}] Handler registered (private DMs only).")
 
 
 # ---------------------------------------------------------------------------
-# Public entry point called from runner.py
+# Public entry point
 # ---------------------------------------------------------------------------
 
 
 def setup_auto_reply(clients: dict[str, TelegramClient]) -> None:
-    """Register auto-reply handlers on all configured clients.
-
-    Called from runner._main() after clients are connected, before the MCP
-    transport starts. Safe to call when AUTO_REPLY_ENABLED is False — it
-    exits immediately so the caller doesn't need to guard.
-    """
     if not AUTO_REPLY_ENABLED:
+        _log("AUTO_REPLY_ENABLED is not set — skipping.")
         return
 
     if not LLM_API_KEY:
-        print(
-            "WARNING: AUTO_REPLY_ENABLED=true but AUTO_REPLY_LLM_API_KEY is not set. "
-            "Auto-reply is disabled.",
-            flush=True,
-        )
+        _log("WARNING: AUTO_REPLY_ENABLED=true but AUTO_REPLY_LLM_API_KEY is not set — skipping.")
         return
 
     for label, client in clients.items():
         register_auto_reply(client, label)
 
-    print(
+    _log(
         f"Auto-reply active on {len(clients)} account(s) "
-        f"using model '{LLM_MODEL}' ({LLM_BASE_URL}).",
-        flush=True,
+        f"using model '{LLM_MODEL}' at {LLM_BASE_URL}"
     )
