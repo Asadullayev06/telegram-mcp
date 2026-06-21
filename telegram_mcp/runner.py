@@ -12,6 +12,7 @@ except UnsafeInstallationError as exc:
 from telegram_mcp import runtime as _runtime
 from telegram_mcp.runtime import *
 import telegram_mcp.tools  # noqa: F401 - registers MCP tools via decorators
+from telegram_mcp.auto_reply import setup_auto_reply
 
 
 async def _connect_authorized_client(label, client) -> None:
@@ -61,6 +62,9 @@ async def _main() -> None:
                 print(f"Entity cache warm failed: {warm_exc}", file=sys.stderr)
 
         warm_task = asyncio.create_task(_warm_caches())
+
+        # Register auto-reply handlers (no-op when AUTO_REPLY_ENABLED is not set)
+        setup_auto_reply(clients)
 
         transport = _resolve_transport()
         if transport in ("sse", "streamable-http", "http"):

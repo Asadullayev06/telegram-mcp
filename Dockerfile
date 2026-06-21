@@ -51,6 +51,18 @@ ENV HOST="0.0.0.0"
 # /etc, /app, etc. off-limits.
 ENV MCP_DEFAULT_ROOT="/tmp"
 
+# --- Auto-reply bot (optional) ---
+# Set AUTO_REPLY_ENABLED=true and provide your LLM API key to activate.
+ENV AUTO_REPLY_ENABLED="false"
+ENV AUTO_REPLY_LLM_API_KEY=""
+ENV AUTO_REPLY_LLM_BASE_URL="https://openrouter.ai/api/v1"
+ENV AUTO_REPLY_LLM_MODEL="mistralai/mistral-7b-instruct:free"
+ENV AUTO_REPLY_LLM_MAX_TOKENS="300"
+ENV AUTO_REPLY_LLM_TEMPERATURE="0.8"
+ENV AUTO_REPLY_HISTORY_LIMIT="20"
+ENV AUTO_REPLY_TYPING_DELAY="2.0"
+ENV AUTO_REPLY_SYSTEM_PROMPT=""
+
 EXPOSE 8000
 
 # Define the command to run the application
