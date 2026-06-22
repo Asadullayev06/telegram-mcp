@@ -44,7 +44,10 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 SYSTEM_PROMPT: str = os.environ.get("AUTO_REPLY_SYSTEM_PROMPT", "") or DEFAULT_SYSTEM_PROMPT
 
-TYPING_DELAY: float = float(os.environ.get("AUTO_REPLY_TYPING_DELAY", "2.0"))
+# Seconds to wait before marking the message as read (simulates "seeing" it)
+READ_DELAY: float = float(os.environ.get("AUTO_REPLY_READ_DELAY", "10.0"))
+# Seconds to show "typing..." after reading, before sending
+TYPING_DELAY: float = float(os.environ.get("AUTO_REPLY_TYPING_DELAY", "4.0"))
 
 
 def _log(msg: str) -> None:
@@ -156,17 +159,25 @@ def register_auto_reply(client: TelegramClient, label: str) -> None:
             return
 
         sender_name = getattr(sender, "first_name", None) or str(getattr(sender, "id", "?"))
-        _log(f"[{label}] Incoming DM from {sender_name!r} — generating reply...")
+        _log(f"[{label}] Incoming DM from {sender_name!r} — waiting {READ_DELAY}s before reading...")
 
+        # Step 1: sit unread for a natural delay
+        await asyncio.sleep(READ_DELAY)
+
+        # Step 2: mark as read
+        await client.send_read_acknowledge(event.chat_id, event.message)
+        _log(f"[{label}] Marked as read — generating reply...")
+
+        # Step 3: generate reply while "typing" indicator is shown
         llm_messages = await _build_messages(client, event.peer_id, me.id, text)
-        reply_text = await _call_llm(llm_messages)
 
-        if not reply_text:
-            _log(f"[{label}] No reply generated — aborting.")
-            return
-
-        if TYPING_DELAY > 0:
-            async with client.action(event.chat_id, "typing"):
+        async with client.action(event.chat_id, "typing"):
+            reply_text = await _call_llm(llm_messages)
+            if not reply_text:
+                _log(f"[{label}] No reply generated — aborting.")
+                return
+            # Hold the typing indicator for a natural extra pause
+            if TYPING_DELAY > 0:
                 await asyncio.sleep(TYPING_DELAY)
 
         await client.send_message(event.chat_id, reply_text)
@@ -181,6 +192,12 @@ def register_auto_reply(client: TelegramClient, label: str) -> None:
 
 
 def setup_auto_reply(clients: dict[str, TelegramClient]) -> None:
+    # Dump all AUTO_REPLY_* env vars for debugging (mask the key value)
+    for k, v in os.environ.items():
+        if k.startswith("AUTO_REPLY_"):
+            masked = (v[:6] + "***") if k == "AUTO_REPLY_LLM_API_KEY" and v else repr(v)
+            _log(f"ENV {k}={masked}")
+
     if not AUTO_REPLY_ENABLED:
         _log("AUTO_REPLY_ENABLED is not set — skipping.")
         return
