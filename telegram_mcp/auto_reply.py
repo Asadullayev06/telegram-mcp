@@ -150,11 +150,30 @@ def register_auto_reply(client: TelegramClient, label: str) -> None:
     @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
     async def _handle_dm(event: events.NewMessage.Event) -> None:
         text: str = getattr(event.message, "message", "") or ""
+        msg = event.message
         _log(f"[{label}] DM event fired. text={repr(text[:80])}")
 
+        # Detect media type if no text
         if not text.strip():
-            _log(f"[{label}] Skipping: media-only message.")
-            return
+            if getattr(msg, "voice", None) is not None:
+                text = "[the person sent you a voice message — acknowledge it naturally, say you'll listen]"
+            elif getattr(msg, "video_note", None) is not None:
+                text = "[the person sent you a video message (circle) — acknowledge it naturally]"
+            elif getattr(msg, "photo", None) is not None:
+                text = "[the person sent you a photo — react to it naturally]"
+            elif getattr(msg, "video", None) is not None:
+                text = "[the person sent you a video — react to it naturally]"
+            elif getattr(msg, "audio", None) is not None:
+                text = "[the person sent you an audio file — acknowledge it naturally]"
+            elif getattr(msg, "sticker", None) is not None:
+                text = "[the person sent you a sticker — react briefly and naturally]"
+            elif getattr(msg, "gif", None) is not None:
+                text = "[the person sent you a GIF — react briefly and naturally]"
+            elif getattr(msg, "document", None) is not None:
+                text = "[the person sent you a file/document — acknowledge it naturally]"
+            else:
+                _log(f"[{label}] Skipping: empty message with no recognizable media.")
+                return
 
         sender = await event.get_sender()
 
