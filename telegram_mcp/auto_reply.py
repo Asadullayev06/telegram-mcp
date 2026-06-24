@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import sys
 from typing import Optional
 
@@ -44,8 +45,9 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 SYSTEM_PROMPT: str = os.environ.get("AUTO_REPLY_SYSTEM_PROMPT", "") or DEFAULT_SYSTEM_PROMPT
 
-# Seconds to wait before marking the message as read (simulates "seeing" it)
-READ_DELAY: float = float(os.environ.get("AUTO_REPLY_READ_DELAY", "10.0"))
+# Random read delay range in seconds (min and max)
+READ_DELAY_MIN: float = float(os.environ.get("AUTO_REPLY_READ_DELAY_MIN", "4.0"))
+READ_DELAY_MAX: float = float(os.environ.get("AUTO_REPLY_READ_DELAY_MAX", "14.0"))
 # Seconds to show "typing..." after reading, before sending
 TYPING_DELAY: float = float(os.environ.get("AUTO_REPLY_TYPING_DELAY", "4.0"))
 
@@ -195,10 +197,11 @@ def register_auto_reply(client: TelegramClient, label: str) -> None:
                 return
 
         sender_name = getattr(sender, "first_name", None) or str(getattr(sender, "id", "?"))
-        _log(f"[{label}] Incoming DM from {sender_name!r} — waiting {READ_DELAY}s before reading...")
+        read_delay = random.uniform(READ_DELAY_MIN, READ_DELAY_MAX)
+        _log(f"[{label}] Incoming DM from {sender_name!r} — waiting {read_delay:.1f}s before reading...")
 
-        # Step 1: sit unread for a natural delay
-        await asyncio.sleep(READ_DELAY)
+        # Step 1: sit unread for a random delay
+        await asyncio.sleep(read_delay)
 
         # Step 2: mark as read
         await client.send_read_acknowledge(event.chat_id, event.message)
