@@ -49,6 +49,15 @@ READ_DELAY: float = float(os.environ.get("AUTO_REPLY_READ_DELAY", "10.0"))
 # Seconds to show "typing..." after reading, before sending
 TYPING_DELAY: float = float(os.environ.get("AUTO_REPLY_TYPING_DELAY", "4.0"))
 
+# Comma-separated usernames (without @) and/or numeric user IDs to never reply to.
+# Example: AUTO_REPLY_BLOCKLIST=john_doe,987654321,jane123
+_raw_blocklist = os.environ.get("AUTO_REPLY_BLOCKLIST", "")
+BLOCKLIST: set[str] = {
+    item.strip().lstrip("@").lower()
+    for item in _raw_blocklist.split(",")
+    if item.strip()
+}
+
 
 def _log(msg: str) -> None:
     print(f"[auto_reply] {msg}", file=sys.stderr, flush=True)
@@ -157,6 +166,14 @@ def register_auto_reply(client: TelegramClient, label: str) -> None:
         if sender and getattr(sender, "id", None) == me.id:
             _log(f"[{label}] Skipping: message from self.")
             return
+
+        # Blocklist check — match by username or numeric user ID
+        if BLOCKLIST:
+            sender_username = (getattr(sender, "username", None) or "").lower()
+            sender_id_str = str(getattr(sender, "id", ""))
+            if sender_username in BLOCKLIST or sender_id_str in BLOCKLIST:
+                _log(f"[{label}] Skipping: sender is on the blocklist.")
+                return
 
         sender_name = getattr(sender, "first_name", None) or str(getattr(sender, "id", "?"))
         _log(f"[{label}] Incoming DM from {sender_name!r} — waiting {READ_DELAY}s before reading...")
