@@ -22,9 +22,6 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Diagnostic: fail the build loudly if mcp.server.fastmcp isn't importable.
-RUN pip show mcp && python -c "import mcp.server.fastmcp; print('fastmcp OK:', mcp.server.fastmcp.__file__)"
-
 # Copy the rest of the application code
 COPY main.py sanitize.py ./
 COPY telegram_mcp ./telegram_mcp
