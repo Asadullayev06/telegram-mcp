@@ -40,7 +40,7 @@ ENV TELEGRAM_SESSION_STRING=""
 
 # Force SSE transport in containerized deployments. Railway/other PaaS will
 # inject PORT; HOST defaults to 0.0.0.0 so the server binds publicly.
-ENV MCP_TRANSPORT="sse"
+ENV MCP_TRANSPORT="streamable-http"
 ENV PORT="8000"
 ENV HOST="0.0.0.0"
 
