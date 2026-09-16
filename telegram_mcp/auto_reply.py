@@ -19,6 +19,8 @@ import httpx
 from telethon import TelegramClient, events
 from telethon.tl.types import User
 
+from telegram_mcp.apartment_search import build_apartment_context
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -119,7 +121,16 @@ async def _build_messages(
     me_id: int,
     incoming_text: str,
 ) -> list[dict]:
-    history_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    system_content = SYSTEM_PROMPT
+    try:
+        apartment_context = await build_apartment_context(incoming_text)
+    except Exception as exc:
+        _log(f"apartment context failed: {exc}")
+        apartment_context = None
+    if apartment_context:
+        system_content = f"{SYSTEM_PROMPT}\n\n---\n{apartment_context}"
+
+    history_messages = [{"role": "system", "content": system_content}]
 
     try:
         fetched = await client.get_messages(peer, limit=HISTORY_LIMIT)
