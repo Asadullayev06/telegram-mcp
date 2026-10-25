@@ -68,30 +68,38 @@ async def _main() -> None:
 
         transport = _resolve_transport()
         if transport in ("sse", "streamable-http", "http"):
+            import uvicorn
+
+            from telegram_mcp.http_auth import install_http_auth
+
             port = int(os.environ.get("PORT", "8000"))
             host = os.environ.get("HOST", "0.0.0.0")
             mcp.settings.host = host
             mcp.settings.port = port
             # FastMCP defaults its DNS-rebinding allowlist to localhost only,
             # which 421s any request reaching the container through a PaaS
-            # edge proxy (Railway, Fly, etc). Disable the check unless the
-            # operator explicitly enables it.
+            # edge proxy (Railway, Coolify, Fly, etc). Disable the check unless
+            # the operator explicitly enables it.
             if os.environ.get("MCP_DISABLE_HOST_CHECK", "1") not in ("0", "false", "False"):
                 mcp.settings.transport_security.enable_dns_rebinding_protection = False
-        if transport == "sse":
+
+            if transport == "sse":
+                app = mcp.sse_app()
+                label = f"http://{host}:{port}/sse"
+            else:
+                app = mcp.streamable_http_app()
+                label = f"http://{host}:{port}/mcp"
+
+            # Attach bearer-token auth (no-op unless MCP_AUTH_TOKEN is set).
+            install_http_auth(app, endpoint_label=label)
+
             print(
                 f"Telegram client(s) started ({labels}). "
-                f"Running MCP server over SSE on http://{host}:{port}/sse ...",
+                f"Running MCP server on {label} ...",
                 file=sys.stderr,
             )
-            await mcp.run_sse_async()
-        elif transport in ("streamable-http", "http"):
-            print(
-                f"Telegram client(s) started ({labels}). "
-                f"Running MCP server over Streamable HTTP on http://{host}:{port}/mcp ...",
-                file=sys.stderr,
-            )
-            await mcp.run_streamable_http_async()
+            config = uvicorn.Config(app, host=host, port=port, log_level="info")
+            await uvicorn.Server(config).serve()
         else:
             print(
                 f"Telegram client(s) started ({labels}). Running MCP server over stdio...",
