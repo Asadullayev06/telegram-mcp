@@ -156,18 +156,54 @@ def _get_exposed_tools_mode(value: Optional[str] = None) -> str:
     return mode
 
 
+def _parse_tool_list(raw: Optional[str]) -> set[str]:
+    """Split a comma/whitespace-separated tool-name list into a set."""
+    if not raw:
+        return set()
+    parts = re.split(r"[,\s]+", raw.strip())
+    return {p for p in parts if p}
+
+
 def _apply_exposed_tools_mode(server: FastMCP = mcp, mode: Optional[str] = None) -> list[str]:
-    """Prune registered MCP tools according to the configured exposure mode."""
+    """Prune registered MCP tools according to the configured exposure rules.
+
+    Three independent, composable controls (applied in this order):
+
+    1. ``TELEGRAM_EXPOSED_TOOLS=read-only`` keeps only readOnlyHint tools.
+    2. ``TELEGRAM_TOOLS_ALLOWLIST=a,b,c`` keeps ONLY the named tools (plus any
+       added back by the denylist being irrelevant). When set, everything else
+       is removed — the simplest way to hand an agent a small, curated surface.
+    3. ``TELEGRAM_TOOLS_DENYLIST=x,y`` removes the named tools. Applied after
+       the allowlist, so it can trim a few more from an allowlisted set.
+    """
     selected_mode = _get_exposed_tools_mode() if mode is None else _get_exposed_tools_mode(mode)
-    if selected_mode == "all":
-        return []
+    allowlist = _parse_tool_list(os.getenv("TELEGRAM_TOOLS_ALLOWLIST"))
+    denylist = _parse_tool_list(os.getenv("TELEGRAM_TOOLS_DENYLIST"))
 
     removed: list[str] = []
     for tool in list(server._tool_manager.list_tools()):
+        name = tool.name
         annotations = getattr(tool, "annotations", None)
-        if not getattr(annotations, "readOnlyHint", False):
-            server._tool_manager.remove_tool(tool.name)
-            removed.append(tool.name)
+        is_read_only = bool(getattr(annotations, "readOnlyHint", False))
+
+        drop = False
+        if selected_mode == "read-only" and not is_read_only:
+            drop = True
+        if allowlist and name not in allowlist:
+            drop = True
+        if name in denylist:
+            drop = True
+
+        if drop:
+            server._tool_manager.remove_tool(name)
+            removed.append(name)
+
+    if removed:
+        kept = [t.name for t in server._tool_manager.list_tools()]
+        print(
+            f"[tools] exposing {len(kept)} tool(s), removed {len(removed)}.",
+            file=sys.stderr,
+        )
     return removed
 
 
