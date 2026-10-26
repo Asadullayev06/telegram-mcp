@@ -1003,7 +1003,20 @@ async def _get_effective_allowed_roots_with_status(
         return [], ROOTS_STATUS_NOT_CONFIGURED
 
     try:
-        list_roots_result = await ctx.session.list_roots()
+        list_roots_result = await asyncio.wait_for(
+            ctx.session.list_roots(), timeout=5.0
+        )
+    except asyncio.TimeoutError:
+        # Some clients advertise (or are optimistically asked for) roots but
+        # never answer the request. Without a timeout this await blocks
+        # forever and hangs the whole tool call (e.g. download_media). Fall
+        # back to server-side roots (MCP_DEFAULT_ROOT) instead of hanging.
+        logger.warning(
+            "MCP roots request timed out after 5s; falling back to server-side roots."
+        )
+        if fallback_roots:
+            return fallback_roots, ROOTS_STATUS_UNSUPPORTED_FALLBACK
+        return [], ROOTS_STATUS_NOT_CONFIGURED
     except Exception as error:
         if _is_roots_unsupported_error(error):
             if fallback_roots:
