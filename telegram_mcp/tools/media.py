@@ -17,20 +17,50 @@ _INLINE_MAX_BYTES = 25 * 1024 * 1024
 @validate_id("chat_id")
 async def send_file(
     chat_id: Union[int, str],
-    file_path: Union[str, List[str]],
+    file_path: Union[str, List[str]] = None,
     caption: str = None,
+    content_base64: str = None,
+    filename: str = None,
+    force_document: bool = False,
     ctx: Optional[Context] = None,
     account: str = None,
 ) -> str:
     """
     Send a file to a chat.
+
+    Provide EITHER a local file path (``file_path``) OR raw file bytes
+    (``content_base64`` + ``filename``). The bytes form lets a remote caller
+    send a file it generated in memory without that file existing on this
+    server's disk — the right choice when the caller runs in a separate
+    container or machine.
+
     Args:
         chat_id: The chat ID or username.
-        file_path: Absolute or relative path to the file under allowed roots.
+        file_path: Absolute or relative path to a file under allowed roots.
             Pass a list of 2-10 paths to send them as one Telegram media group.
+            Omit when using ``content_base64``.
         caption: Optional caption for the file or media group.
+        content_base64: Base64-encoded file bytes to send directly. Requires
+            ``filename``. Ignored when ``file_path`` is given.
+        filename: The filename (with extension, e.g. "codes.xlsx") Telegram
+            should show. Required with ``content_base64``.
+        force_document: Send as a plain document rather than letting Telegram
+            interpret it as a photo/video. Defaults to False.
     """
     try:
+        if content_base64 is not None:
+            return await _send_bytes(
+                chat_id=chat_id,
+                content_base64=content_base64,
+                filename=filename,
+                caption=caption,
+                force_document=force_document,
+                account=account,
+            )
+
+        if file_path is None:
+            return "Provide either file_path or content_base64 (+ filename)."
+
         if isinstance(file_path, list):
             return await _send_album(
                 chat_id=chat_id,
@@ -49,12 +79,41 @@ async def send_file(
         if path_error:
             return path_error
         entity = await resolve_entity(chat_id, cl)
-        await cl.send_file(entity, str(safe_path), caption=caption)
+        await cl.send_file(entity, str(safe_path), caption=caption, force_document=force_document)
         return f"File sent to chat {chat_id} from {safe_path}."
     except Exception as e:
         return log_and_format_error(
             "send_file", e, chat_id=chat_id, file_path=file_path, caption=caption
         )
+
+
+async def _send_bytes(
+    chat_id: Union[int, str],
+    content_base64: str,
+    filename: str,
+    caption: str = None,
+    force_document: bool = False,
+    account: str = None,
+) -> str:
+    """Send in-memory file bytes supplied as base64, with an explicit filename."""
+    import io
+
+    if not filename:
+        return "filename is required when sending content_base64."
+    try:
+        raw = base64.b64decode(content_base64, validate=True)
+    except Exception:
+        return "content_base64 is not valid base64."
+    if not raw:
+        return "content_base64 decoded to empty content."
+
+    cl = get_client(account)
+    entity = await resolve_entity(chat_id, cl)
+    bio = io.BytesIO(raw)
+    # Telethon uses the file-like object's .name to set the Telegram filename.
+    bio.name = filename
+    await cl.send_file(entity, bio, caption=caption, force_document=force_document)
+    return f"File '{filename}' ({len(raw)} bytes) sent to chat {chat_id}."
 
 
 async def _send_album(
