@@ -100,6 +100,10 @@ def message_to_dict(msg) -> dict:
     sender_id = getattr(msg, "sender_id", None)
     if sender_id is not None:
         d["sender_id"] = sender_id
+    sender = getattr(msg, "sender", None)
+    username = getattr(sender, "username", None) if sender else None
+    if username:
+        d["username"] = username
     if getattr(msg, "out", False):
         d["out"] = True
 
@@ -1850,17 +1854,16 @@ async def get_post_comments(
         entity = await resolve_entity(channel, cl)
         comments = await cl.get_messages(entity, reply_to=message_id, limit=limit)
         total = getattr(comments, "total", len(comments))
-        if not comments:
-            return (
-                f"No comments found for post {message_id} "
-                f"(total_count=0, has_more=false)."
-            )
-        lines = [
-            f"total_count={total} | returned={len(comments)} | "
-            f"has_more={'true' if total > len(comments) else 'false'}"
-        ]
-        lines.extend(format_message_line(m) for m in comments)
-        return "\n".join(lines)
+        records = [message_to_dict(m) for m in comments]
+        return format_tool_result(
+            records,
+            metadata={
+                "post_id": message_id,
+                "total_count": total,
+                "returned": len(records),
+                "has_more": total > len(records),
+            },
+        )
     except Exception as e:
         return log_and_format_error(
             "get_post_comments", e, channel=channel, message_id=message_id, limit=limit
@@ -1898,14 +1901,16 @@ async def get_thread(
         entity = await resolve_entity(chat_id, cl)
         replies = await cl.get_messages(entity, reply_to=message_id, limit=limit)
         total = getattr(replies, "total", len(replies))
-        if not replies:
-            return f"No replies found for message {message_id} (total_count=0)."
-        lines = [
-            f"root={message_id} | total_count={total} | returned={len(replies)} | "
-            f"has_more={'true' if total > len(replies) else 'false'}"
-        ]
-        lines.extend(format_message_line(m) for m in replies)
-        return "\n".join(lines)
+        records = [message_to_dict(m) for m in replies]
+        return format_tool_result(
+            records,
+            metadata={
+                "root": message_id,
+                "total_count": total,
+                "returned": len(records),
+                "has_more": total > len(records),
+            },
+        )
     except Exception as e:
         return log_and_format_error(
             "get_thread", e, chat_id=chat_id, message_id=message_id, limit=limit
@@ -1995,10 +2000,14 @@ async def get_new_messages(
         cl = get_client(account)
         entity = await resolve_entity(chat_id, cl)
         messages = await cl.get_messages(entity, min_id=since_message_id, limit=limit)
-        if not messages:
-            return f"No new messages since {since_message_id}."
-        lines = [format_message_line(m) for m in messages]
-        return "\n".join(lines)
+        records = [message_to_dict(m) for m in messages]
+        return format_tool_result(
+            records,
+            metadata={
+                "since_message_id": since_message_id,
+                "returned": len(records),
+            },
+        )
     except Exception as e:
         return log_and_format_error(
             "get_new_messages",
