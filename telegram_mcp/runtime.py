@@ -864,6 +864,24 @@ def get_sender_name(message) -> str:
         return "Unknown"
 
 
+def get_sender_identity(message) -> str:
+    """Return 'sender_id=<id> @<username>' for a message, parts omitted if absent.
+
+    sender_id is present even when the full sender object wasn't loaded;
+    username only exists for senders with a public @handle. Lets a caller
+    attribute a message to a specific account rather than a display name.
+    """
+    parts = []
+    sender_id = getattr(message, "sender_id", None)
+    if sender_id is not None:
+        parts.append(f"sender_id={sender_id}")
+    sender = getattr(message, "sender", None)
+    username = getattr(sender, "username", None) if sender else None
+    if username:
+        parts.append(f"@{username}")
+    return " ".join(parts)
+
+
 def get_engagement_info(message) -> str:
     """Helper function to get engagement metrics (views, forwards, reactions) from a message."""
     engagement_parts = []

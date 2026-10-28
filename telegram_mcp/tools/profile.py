@@ -251,6 +251,18 @@ async def get_full_user(username: Union[int, str], account: str = None) -> str:
         cl = get_client(account)
         await ensure_connected(cl)
         entity = await resolve_entity(username, cl)
+        if not isinstance(entity, types.User):
+            return json.dumps(
+                {
+                    "isError": True,
+                    "code": "not_a_user",
+                    "message": (
+                        f"'{username}' resolves to a {type(entity).__name__}, not a user. "
+                        "Use get_chat or get_full_chat for channels and groups."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         full = await cl(functions.users.GetFullUserRequest(id=entity))
 
         user = full.users[0] if full.users else None

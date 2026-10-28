@@ -243,11 +243,16 @@ async def get_participants(
         cl = get_client(account)
         await ensure_connected(cl)
 
+        # Resolve to a concrete entity first. StringSession has no persistent
+        # entity cache, so handing iter_participants a raw numeric id fails to
+        # find the peer; resolve_entity warms it (and accepts @username or id).
+        entity = await resolve_entity(chat_id, cl)
+
         # Use iter_participants with offset to fetch only the needed slice,
         # avoiding O(N) fetching on later pages.
         offset = (page - 1) * page_size
         participants = []
-        async for participant in cl.iter_participants(chat_id, limit=page_size, offset=offset):
+        async for participant in cl.iter_participants(entity, limit=page_size, offset=offset):
             participants.append(participant)
 
         if not participants:
@@ -256,6 +261,7 @@ async def get_participants(
         records = [
             {
                 "id": p.id,
+                "username": getattr(p, "username", None),
                 "name": sanitize_name(
                     f"{getattr(p, 'first_name', '')} {getattr(p, 'last_name', '')}".strip()
                 ),

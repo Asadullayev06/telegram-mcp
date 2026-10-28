@@ -174,7 +174,11 @@ def message_to_dict(msg) -> dict:
 
 def format_message_line(msg) -> str:
     """Single-line human-readable message representation with ALL key flags."""
-    parts = [f"ID: {msg.id}", get_sender_name(msg), f"Date: {msg.date}"]
+    parts = [f"ID: {msg.id}", get_sender_name(msg)]
+    identity = get_sender_identity(msg)
+    if identity:
+        parts.append(identity)
+    parts.append(f"Date: {msg.date}")
 
     reply_to_id = (
         getattr(msg.reply_to, "reply_to_msg_id", None) if getattr(msg, "reply_to", None) else None
