@@ -248,12 +248,15 @@ async def get_participants(
         # find the peer; resolve_entity warms it (and accepts @username or id).
         entity = await resolve_entity(chat_id, cl)
 
-        # Use iter_participants with offset to fetch only the needed slice,
-        # avoiding O(N) fetching on later pages.
+        # Telethon's iter_participants has NO offset parameter (passing one
+        # raises TypeError). Fetch up to the end of the requested page and
+        # slice; cap the fetch so a deep page on a huge group stays bounded.
         offset = (page - 1) * page_size
-        participants = []
-        async for participant in cl.iter_participants(entity, limit=page_size, offset=offset):
-            participants.append(participant)
+        fetch_limit = offset + page_size
+        collected = []
+        async for participant in cl.iter_participants(entity, limit=fetch_limit):
+            collected.append(participant)
+        participants = collected[offset:offset + page_size]
 
         if not participants:
             return format_tool_result([])
@@ -271,7 +274,7 @@ async def get_participants(
         result = format_tool_result(records)
 
         # Append pagination metadata; has_more indicates whether a next page likely exists
-        has_more = len(participants) == page_size
+        has_more = len(collected) == fetch_limit and len(participants) == page_size
         result += f"\n\nPage {page} (showing {len(participants)} participants)"
         if has_more:
             result += f" — more results available on page {page + 1}"

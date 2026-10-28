@@ -250,7 +250,12 @@ async def get_full_user(username: Union[int, str], account: str = None) -> str:
     try:
         cl = get_client(account)
         await ensure_connected(cl)
-        entity = await resolve_entity(username, cl)
+        # Accept a numeric user id passed as a string (the natural key you get
+        # from a message's sender_id), not just @usernames.
+        lookup = username
+        if isinstance(lookup, str) and lookup.lstrip("-").isdigit():
+            lookup = int(lookup)
+        entity = await resolve_entity(lookup, cl)
         if not isinstance(entity, types.User):
             return json.dumps(
                 {
@@ -258,7 +263,7 @@ async def get_full_user(username: Union[int, str], account: str = None) -> str:
                     "code": "not_a_user",
                     "message": (
                         f"'{username}' resolves to a {type(entity).__name__}, not a user. "
-                        "Use get_chat or get_full_chat for channels and groups."
+                        "Use get_chat for channels and groups."
                     ),
                 },
                 ensure_ascii=False,
@@ -297,12 +302,21 @@ async def get_full_user(username: Union[int, str], account: str = None) -> str:
                     else f"--{b_month:02d}-{b_day:02d}"
                 )
 
+        # Phone is PII. Exposed by default for backward compatibility; set
+        # TELEGRAM_EXPOSE_PHONE_NUMBERS=false to omit it (recommended when an
+        # LLM agent drives this server).
+        expose_phone = os.getenv("TELEGRAM_EXPOSE_PHONE_NUMBERS", "true").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
         result = {
             "id": user.id if user else None,
             "first_name": sanitize_name(getattr(user, "first_name", None)) if user else None,
             "last_name": sanitize_name(getattr(user, "last_name", None)) if user else None,
             "username": getattr(user, "username", None) if user else None,
-            "phone": getattr(user, "phone", None) if user else None,
+            "phone": (getattr(user, "phone", None) if user else None) if expose_phone else None,
             "bio": sanitize_user_content(full_user.about or "", max_length=1024),
             "personal_channel": personal_channel,
             "birthday": birthday_str,

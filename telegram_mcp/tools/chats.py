@@ -631,35 +631,55 @@ async def get_chat(chat_id: Union[int, str], account: str = None) -> str:
             record["type"] = get_entity_type(entity)
             if entity.username:
                 record["username"] = entity.username
-            if entity.phone:
+            expose_phone = os.getenv("TELEGRAM_EXPOSE_PHONE_NUMBERS", "true").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if entity.phone and expose_phone:
                 record["phone"] = entity.phone
             record["bot"] = bool(entity.bot)
             record["verified"] = bool(entity.verified)
 
-        # Get last activity if it's a dialog
+        # Last message for THIS entity. NOTE: get_dialogs(offset_peer=entity)
+        # does NOT filter to the entity — offset_peer is a pagination cursor,
+        # so limit=1 returned the globally-latest dialog's message for every
+        # chat (a cross-chat leak). Fetch the entity's own last message.
         try:
-            # Using get_dialogs might be slow if there are many dialogs
-            # Alternative: Get entity again via get_dialogs if needed for unread count
-            dialog = await cl.get_dialogs(limit=1, offset_id=0, offset_peer=entity)
-            if dialog:
-                dialog = dialog[0]
-                record["unread"] = dialog.unread_count
-                record["archived"] = bool(getattr(dialog, "archived", False))
-                if dialog.message:
-                    last_msg = dialog.message
-                    sender_name = "Unknown"
-                    if last_msg.sender:
-                        sender_name = getattr(last_msg.sender, "first_name", "") or getattr(
-                            last_msg.sender, "title", "Unknown"
-                        )
-                        if hasattr(last_msg.sender, "last_name") and last_msg.sender.last_name:
-                            sender_name += f" {last_msg.sender.last_name}"
-                    sender_name = sanitize_name(sender_name.strip() or "Unknown")
-                    record["last_message"] = {
-                        "sender": sender_name,
-                        "date": last_msg.date,
-                        "text": sanitize_user_content(last_msg.message),
-                    }
+            last_msgs = await cl.get_messages(entity, limit=1)
+            if last_msgs:
+                last_msg = last_msgs[0]
+                sender_name = "Unknown"
+                if last_msg.sender:
+                    sender_name = getattr(last_msg.sender, "first_name", "") or getattr(
+                        last_msg.sender, "title", "Unknown"
+                    )
+                    if getattr(last_msg.sender, "last_name", None):
+                        sender_name += f" {last_msg.sender.last_name}"
+                lm = {
+                    "id": last_msg.id,
+                    "sender": sanitize_name(sender_name.strip() or "Unknown"),
+                    "date": last_msg.date,
+                    "text": sanitize_user_content(last_msg.message),
+                }
+                lm_sender_id = getattr(last_msg, "sender_id", None)
+                if lm_sender_id is not None:
+                    lm["sender_id"] = lm_sender_id
+                lm_username = getattr(getattr(last_msg, "sender", None), "username", None)
+                if lm_username:
+                    lm["username"] = lm_username
+                record["last_message"] = lm
+        except Exception as msg_ex:
+            logger.warning(f"Could not get last message for {chat_id}: {msg_ex}")
+
+        # Unread/archived for THIS entity via a per-peer dialog lookup.
+        try:
+            peer = await cl(functions.messages.GetPeerDialogsRequest(peers=[entity]))
+            if peer and getattr(peer, "dialogs", None):
+                d = peer.dialogs[0]
+                record["unread"] = getattr(d, "unread_count", None)
+                record["archived"] = getattr(d, "folder_id", 0) == 1
         except Exception as diag_ex:
             logger.warning(f"Could not get dialog info for {chat_id}: {diag_ex}")
 
